@@ -1,0 +1,53 @@
+name: Check PR
+
+on:
+  pull_request:
+    types: [opened, reopened, edited, ready_for_review, synchronize]
+    branches:
+      - 'release/*'
+      - 'main'
+    
+jobs:
+
+  check-pr-title-format:
+    name: CHECK PR TITLE FORMAT
+    if: github.event.pull_request.base.ref != 'main'
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check pr title ${{ github.event.pull_request.title }} is in right format
+        run : |
+          res=$(echo ${{ github.event.pull_request.title }} | sed -E 's/^\[(fix|feature|improvement)\] *([A-Za-z]+\-[0-9]+) *(.*)$/y/gi')
+          if [ $res = "y" ]; then echo "ok"; else echo "$res is a wronmg format. Format should be: [fix|feature|improvement] AA-000 PR description" && exit 1; fi;
+
+  check-parent-branch:
+    name: VERIFY BASE BRANCH ORIGIN
+    runs-on: ubuntu-latest
+    steps:
+    
+      - name: Clone git repo
+        run: git clone https://${{ secrets.ACTIONS_ACCESS_TOKEN }}@github.com/arachna-net/sbx.git .
+        
+      - name: Checkout to ${{ github.event.pull_request.head.ref }}
+        run: |
+         git fetch
+         echo "Checing out main"
+         git checkout main
+         echo "Checing out to ${{ github.event.pull_request.head.ref }}"
+         git checkout ${{ github.event.pull_request.head.ref }}
+      - name: Get parent branch for ${{ github.event.pull_request.head.ref }}
+        id: get_parent_branch
+        run: echo "::set-output name=branch::$(git log --oneline | cut -f 1 -d' ' | (while read commit ; do other_branches=$(git branch --contains $commit | egrep -v '^\* '); if [ -n "${other_branches}" ] ; then echo -e "${other_branches}" && break; fi; done;) | xargs)"
+         
+
+      - name: Check parent branch is main for ${{ github.event.pull_request.head.ref }}
+        run: |
+         echo "Parent branch found: ${{ steps.get_parent_branch.outputs.branch }}"
+         if [ ${{ steps.get_parent_branch.outputs.branch }} = main ]; then echo "${{ github.event.pull_request.head.ref }} is derived from main"; else echo "VERIFICATION FAILURE: ${{ github.event.pull_request.head.ref }} is not derived from main. Derived branch is: ${{ steps.get_parent_branch.outputs.branch }}" && exit 1; fi;
+  check-if-compile:
+    name: CHECK COMPILING
+    runs-on: ubuntu-latest
+    needs: [check-parent-branch]
+    steps:
+      - name: Compile solution
+        run: echo "build solution"

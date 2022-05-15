@@ -1,0 +1,103 @@
+name: Append changelog
+
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+
+  append-changelog:
+    name: APPEND CHANGELOG
+    runs-on: ubuntu-latest
+    steps: 
+
+      - name: Add checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Add user info
+        run: |
+          git config --global user.email "automation@arachna.net"
+          git config --global user.name "Automation"
+
+      - name: Add changes file
+        id: changes
+        run: | 
+
+          echo $(git log $(git describe --tags --abbrev=0)...HEAD | grep -E -i '.*\[(fix|feature|improvement)\] *\[*[A-Za-z]+\-[0-9]+\]* +.+')
+
+          results=$(git log $(git describe --tags --abbrev=0)...HEAD | grep -E -i '.*\[(fix|feature|improvement)\] *\[*[A-Za-z]+\-[0-9]+\]* +.+')
+
+          echo "got results"
+
+          echo "Checking if should continue run"
+
+          if read -r
+          then
+            echo "Has changes. Continue."
+            echo "::set-output name=should_continue::1"
+          else
+            echo "Has no changes. Should stop";
+            echo "::set-output name=should_continue::0"
+            exit 0
+          fi <<< $results
+
+          while read -r line
+          do
+            file=".changes/unreleased/Fix-$(date +%Y%m%d)-$(date +%H%M%S%s).yaml"
+            touch $file
+            echo "kind: $(sed -E 's/^.*\[(fix|feature|improvement)\] *\[*([A-Za-z]+\-[0-9]+)\]* (.+)$/\1/gi' <<< $line)" >> $file
+            echo "body: $(sed -E 's/^.*\[(fix|feature|improvement)\] *\[*([A-Za-z]+\-[0-9]+)\]* (.+)$/\3/gi' <<< $line)" >> $file
+            echo "time: $(date +%Y-%m-%dT%H:%M:%S.%6NZ)" >> $file
+            echo "custom:" >> $file
+            echo "  Issue: $(sed -E 's/^.*\[(fix|feature|improvement)\] *\[*([A-Za-z]+\-[0-9]+)\]* (.+)$/\2/gi' <<< $line)" >> $file
+            
+            echo ""
+            echo "Added file File content".
+            echo "----------"
+            cat $file
+            echo "----------"
+            echo ""
+            sleep 1 
+          done <<< $results
+
+          if grep -i -E '\[(feature|improvement)\]' $results; then 
+            echo "::set-output name=mode::minor"
+          else 
+            echo "::set-output name=mode::patch"
+          fi
+      
+      - name: Install changie
+        if: steps.changes.outputs.should_continue == 1
+        run: |
+          mkdir internal
+          cd internal
+          wget https://github.com/miniscruff/changie/releases/download/v1.6.1/changie_1.6.1_linux_amd64.deb
+          sudo dpkg -i changie_1.6.1_linux_amd64.deb
+          changie --version
+      
+      - name: Merge changes
+        if: steps.changes.outputs.should_continue == 1
+        run: |
+          changie batch ${{ steps.changes.outputs.mode }}
+          changie merge
+          cat CHANGELOG.md
+
+      - name: Commit changes to git
+        if: steps.changes.outputs.should_continue == 1
+        run: |
+          git add .
+          git commit -am "Added changelog for $(changie latest)"
+
+      - name: Create tag
+        if: steps.changes.outputs.should_continue == 1
+        run: |
+          git tag -a $(changie latest) -m $(changie latest)
+
+      - name: Push changelog
+        run: git push origin
+
+      - name: Push tag
+        run: git push origin --tags
